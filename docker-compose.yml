@@ -1,0 +1,167 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # 1. Main Next.js / Web API Server (App Router & SSE Hub)
+  # -------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aetherflow-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres_secure_pw@postgres:5432/aetherflow_db?schema=public
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin_secret
+      - AWS_S3_BUCKET=aetherflow-media-vault
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - aetherflow-net
+
+  # -------------------------------------------------------------
+  # 2. BullMQ Dedicated FFmpeg Transcoding Worker Cluster
+  # -------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aetherflow-worker
+    command: ["node", "dist/worker/index.js"]
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres_secure_pw@postgres:5432/aetherflow_db?schema=public
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin_secret
+      - AWS_S3_BUCKET=aetherflow-media-vault
+      - WORKER_CONCURRENCY=2
+    depends_on:
+      - redis
+      - postgres
+      - minio
+    volumes:
+      - transcode-scratch:/tmp/transcode-scratch
+    networks:
+      - aetherflow-net
+
+  # -------------------------------------------------------------
+  # 3. PostgreSQL Database (Prisma ORM)
+  # -------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: aetherflow-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_secure_pw
+      - POSTGRES_DB=aetherflow_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aetherflow_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aetherflow-net
+
+  # -------------------------------------------------------------
+  # 4. Redis Cache & BullMQ Message Broker
+  # -------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: aetherflow-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aetherflow-net
+
+  # -------------------------------------------------------------
+  # 5. MinIO S3-Compatible Object Storage Emulator
+  # -------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-03-30T09-41-56Z
+    container_name: aetherflow-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aetherflow-net
+
+  # -------------------------------------------------------------
+  # 6. MinIO Bucket & CORS Bootstrap Provisioner
+  # -------------------------------------------------------------
+  minio-init:
+    image: minio/mc:RELEASE.2024-03-30T15-31-52Z
+    container_name: aetherflow-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set localminio http://minio:9000 minioadmin minioadmin_secret;
+      /usr/bin/mc mb --ignore-existing localminio/aetherflow-media-vault;
+      /usr/bin/mc anonymous set download localminio/aetherflow-media-vault/renditions;
+      echo 'MinIO S3 Buckets Initialized Successfully';
+      exit 0;
+      "
+    networks:
+      - aetherflow-net
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  minio-data:
+    driver: local
+  transcode-scratch:
+    driver: local
+
+networks:
+  aetherflow-net:
+    driver: bridge

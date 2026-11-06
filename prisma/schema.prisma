@@ -1,0 +1,152 @@
+// Prisma Schema for Cloud-Native Media Processing Pipeline
+// Production PostgreSQL database configuration with full relational integrity
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AssetStatus {
+  UPLOADING
+  UPLOADED
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+  ARCHIVED
+}
+
+enum JobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+  DEAD_LETTER
+}
+
+enum Resolution {
+  RES_4K
+  RES_1080P
+  RES_720P
+  RES_480P
+  RES_360P
+}
+
+enum Codec {
+  H264
+  H265_HEVC
+  AV1
+  VP9
+  AAC
+  OPUS
+}
+
+enum ContainerFormat {
+  HLS
+  DASH
+  MP4
+  WEBM
+  MP3
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String?
+  apiKeyHash   String?       @unique
+  storageQuota BigInt        @default(107374182400) // 100 GB default
+  usedStorage  BigInt        @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  mediaAssets  MediaAsset[]
+
+  @@map("users")
+}
+
+model MediaAsset {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String
+  originalName    String
+  mimeType        String
+  fileSizeBytes   BigInt
+  durationSeconds Float?
+  width           Int?
+  height          Int?
+  frameRate       Float?
+  aspectRatio     String?
+  s3SourceBucket  String
+  s3SourceKey     String
+  status          AssetStatus     @default(UPLOADING)
+  masterPlaylist  String?         // CloudFront CDN URL for master.m3u8
+  thumbnailUrl    String?
+  spriteSheetUrl  String?
+  waveformJsonUrl String?
+  metadata        Json?           // Full probe JSON from ffprobe
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  processingJobs  ProcessingJob[]
+  renditions      Rendition[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("media_assets")
+}
+
+model ProcessingJob {
+  id              String        @id @default(uuid())
+  mediaAssetId    String
+  mediaAsset      MediaAsset    @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  bullQueueJobId  String?       @unique
+  status          JobStatus     @default(PENDING)
+  priority        Int           @default(5) // 1 (lowest) to 10 (highest)
+  attempts        Int           @default(0)
+  maxRetries      Int           @default(3)
+  progressPercent Float         @default(0.0)
+  currentFps      Float?        @default(0.0)
+  currentBitrate  String?
+  currentStage    String?       // "INGEST", "ANALYSIS", "TRANSCODE_1080P", "TRANSCODE_720P", "PACKAGING", "S3_SYNC"
+  errorMessage    String?       @db.Text
+  errorStack      String?       @db.Text
+  workerId        String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([mediaAssetId])
+  @@index([status])
+  @@index([priority, createdAt])
+  @@map("processing_jobs")
+}
+
+model Rendition {
+  id              String          @id @default(uuid())
+  mediaAssetId    String
+  mediaAsset      MediaAsset      @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  resolution      Resolution
+  width           Int
+  height          Int
+  videoBitrateBps Int
+  audioBitrateBps Int
+  codec           Codec           @default(H264)
+  container       ContainerFormat @default(HLS)
+  playlistKey     String          // S3 key to variant.m3u8
+  playlistUrl     String          // Full CDN URL
+  segmentPrefix   String          // e.g. "segments/1080p/segment"
+  segmentCount    Int             @default(0)
+  totalSizeBytes  BigInt          @default(0)
+  createdAt       DateTime        @default(now())
+
+  @@unique([mediaAssetId, resolution, codec])
+  @@index([mediaAssetId])
+  @@map("renditions")
+}
