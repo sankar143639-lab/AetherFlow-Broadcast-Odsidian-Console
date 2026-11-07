@@ -2,5 +2,7 @@
   "name": "AetherFlow - Cloud-Native Media Processing Pipeline",
   "description": "Production-grade cloud-native media processing pipeline with adaptive HLS transcoding, BullMQ worker queue, direct S3 presigned uploads, real-time SSE telemetry, and interactive architecture visualizer.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

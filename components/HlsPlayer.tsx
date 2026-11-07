@@ -469,9 +469,16 @@ export const HlsPlayer: React.FC<HlsPlayerProps> = ({
             <FileCode className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
             Master Playlist:
           </span>
-          <span className="font-mono text-cyan-700 dark:text-cyan-300 truncate select-all bg-white dark:bg-slate-900 px-2 py-1 rounded border border-slate-200 dark:border-slate-800">
-            {effectivePlaylistUrl}
-          </span>
+          <a
+            href={effectivePlaylistUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-cyan-700 dark:text-cyan-300 hover:text-cyan-500 dark:hover:text-cyan-200 hover:underline truncate select-all bg-white dark:bg-slate-900 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 transition-colors"
+            title="Click to open local HLS master manifest directly in browser tab"
+          >
+            <span className="truncate">{effectivePlaylistUrl}</span>
+            <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
+          </a>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
