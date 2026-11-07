@@ -1,6 +1,8 @@
 /**
  * AWS S3 Storage Service Layer
  * Zero-server-bypass direct client uploads and asset synchronization
+ * Supports local testing via relative endpoints (/api/renditions/...)
+ * and production deployments via AWS S3 and CloudFront/Cloudflare edge CDN.
  */
 
 export interface S3Config {
@@ -19,7 +21,9 @@ export const defaultS3Config: S3Config = {
   accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin',
   bucketName: process.env.AWS_S3_BUCKET || 'aetherflow-media-vault',
-  cdnBaseUrl: process.env.CLOUDFRONT_DOMAIN ? `https://${process.env.CLOUDFRONT_DOMAIN}` : undefined,
+  // In local development / testing: use local first-party URL (/api/renditions) to avoid Cloudflare tunnel / SSL handshake issues.
+  // In production: set CLOUDFRONT_DOMAIN or your custom CDN domain.
+  cdnBaseUrl: process.env.CLOUDFRONT_DOMAIN ? `https://${process.env.CLOUDFRONT_DOMAIN}` : '/api/renditions',
   forcePathStyle: process.env.NODE_ENV === 'development' || !process.env.AWS_REGION,
 };
 
@@ -43,15 +47,13 @@ export class S3Service {
   ): Promise<{ uploadUrl: string; headers: Record<string, string>; s3Key: string }> {
     const bucket = this.config.bucketName;
     const region = this.config.region;
-    
-    // In production with @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner:
-    // const client = new S3Client({ ... });
-    // const command = new PutObjectCommand({ Bucket: bucket, Key: s3Key, ContentType: contentType, Metadata: customMetadata });
-    // const uploadUrl = await getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+    const hasLiveS3Bucket = process.env.AWS_S3_BUCKET && process.env.AWS_S3_BUCKET !== 'aetherflow-media-vault';
     
     const host = this.config.endpoint 
       ? this.config.endpoint.replace(/^https?:\/\//, '')
-      : `${bucket}.s3.${region}.amazonaws.com`;
+      : hasLiveS3Bucket
+      ? `${bucket}.s3.${region}.amazonaws.com`
+      : 'localhost:3000';
 
     const queryParams = new URLSearchParams({
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
@@ -65,7 +67,9 @@ export class S3Service {
     const protocol = this.config.endpoint?.startsWith('http://') ? 'http' : 'https';
     const baseUrl = this.config.endpoint 
       ? `${this.config.endpoint}/${bucket}/${s3Key}` 
-      : `${protocol}://${bucket}.s3.${region}.amazonaws.com/${s3Key}`;
+      : hasLiveS3Bucket
+      ? `${protocol}://${bucket}.s3.${region}.amazonaws.com/${s3Key}`
+      : `/api/upload/mock-s3-sink/${bucket}/${s3Key}`;
 
     const uploadUrl = `${baseUrl}?${queryParams.toString()}`;
 
@@ -94,26 +98,36 @@ export class S3Service {
   ): Promise<string> {
     const bucket = this.config.bucketName;
     const region = this.config.region;
+    const cleanKey = s3Key.replace(/^\/+/, '');
 
     if (this.config.cdnBaseUrl) {
-      return `${this.config.cdnBaseUrl}/${s3Key}`;
+      const base = this.config.cdnBaseUrl.replace(/\/+$/, '');
+      return `${base}/${cleanKey}`;
     }
 
-    const host = this.config.endpoint 
-      ? `${this.config.endpoint}/${bucket}/${s3Key}`
-      : `https://${bucket}.s3.${region}.amazonaws.com/${s3Key}`;
+    const hasLiveS3Bucket = process.env.AWS_S3_BUCKET && process.env.AWS_S3_BUCKET !== 'aetherflow-media-vault';
+    if (hasLiveS3Bucket) {
+      return `https://${bucket}.s3.${region}.amazonaws.com/${cleanKey}?expires=${Date.now() + expiresInSeconds * 1000}&token=secure_stream_token`;
+    }
 
-    return `${host}?expires=${Date.now() + expiresInSeconds * 1000}&token=secure_stream_token`;
+    return `/api/renditions/${cleanKey}?expires=${Date.now() + expiresInSeconds * 1000}&token=secure_stream_token`;
   }
 
   /**
-   * Constructs an edge-accelerated CDN URL (CloudFront) for HLS playlists or assets.
+   * Constructs an edge-accelerated CDN or local origin URL for HLS playlists or assets.
+   * Avoids external Cloudflare tunnels in local testing by defaulting to /api/renditions/...
    */
   public getCdnUrl(s3Key: string): string {
+    const cleanKey = s3Key.replace(/^\/+/, '');
     if (this.config.cdnBaseUrl) {
-      return `${this.config.cdnBaseUrl}/${s3Key}`;
+      const base = this.config.cdnBaseUrl.replace(/\/+$/, '');
+      return `${base}/${cleanKey}`;
     }
-    return `https://${this.config.bucketName}.s3.${this.config.region}.amazonaws.com/${s3Key}`;
+    const hasLiveS3Bucket = process.env.AWS_S3_BUCKET && process.env.AWS_S3_BUCKET !== 'aetherflow-media-vault';
+    if (hasLiveS3Bucket) {
+      return `https://${this.config.bucketName}.s3.${this.config.region}.amazonaws.com/${cleanKey}`;
+    }
+    return `/api/renditions/${cleanKey}`;
   }
 
   /**

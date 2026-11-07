@@ -144,7 +144,8 @@ export class S3Service {
     return { uploadUrl, headers: { 'Content-Type': contentType, 'Content-Length': String(lengthBytes) } };
   }
   public getCdnUrl(s3Key: string) {
-    return \`https://cdn.aetherflow.io/\${s3Key}\`;
+    // Local testing uses /api/renditions to bypass Cloudflare tunnels; production uses custom CDN
+    return process.env.CLOUDFRONT_DOMAIN ? \`https://\${process.env.CLOUDFRONT_DOMAIN}/\${s3Key}\` : \`/api/renditions/\${s3Key}\`;
   }
 }`
   },
@@ -319,6 +320,37 @@ public class MediaProcessingWorker implements CommandLineRunner {
     <version>3.3.4</version>
   </parent>
 </project>`
+  },
+  'README.md': {
+    category: 'System Architecture & Designs',
+    filename: 'README.md',
+    language: 'markdown',
+    content: `# AetherFlow — Cloud-Native Media Processing Pipeline & Broadcast Console
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22_LTS-green?style=flat-square&logo=node.js)](https://nodejs.org/)
+[![Java](https://img.shields.io/badge/Java-21_LTS_Spring_Boot_3.3-orange?style=flat-square&logo=openjdk)](https://spring.io/projects/spring-boot)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-6.1_libx264_aac-red?style=flat-square&logo=ffmpeg)](https://ffmpeg.org/)
+[![BullMQ](https://img.shields.io/badge/Queue-BullMQ_Redis_Stream-crimson?style=flat-square&logo=redis)](https://bullmq.io/)
+[![AWS S3](https://img.shields.io/badge/Storage-AWS_S3_SigV4-yellow?style=flat-square&logo=amazons3)](https://aws.amazon.com/s3/)
+[![Prisma](https://img.shields.io/badge/ORM-Prisma_PostgreSQL-indigo?style=flat-square&logo=prisma)](https://www.prisma.io/)
+
+AetherFlow is an enterprise-grade distributed media processing pipeline and real-time broadcast operations console.
+
+### 📐 System Architecture & Flow
+1. Client Browser ➔ Direct SigV4 Multi-Part S3 Upload (Zero Server Bypass)
+2. API Gateway ➔ Registers MediaAsset & ProcessingJob in PostgreSQL (Prisma ORM)
+3. Job Dispatcher ➔ Enqueues into Redis with 1-10 Priority Calibration (BullMQ)
+4. Transcode Workers ➔ FFmpeg 6.1 Multi-Bitrate Ladder (1080p, 720p, 480p, Master M3U8, Sprites, FFT)
+5. Dead Letter Queue ➔ 3-Stage Exponential Retry (3s -> 9s -> 27s) before Quarantine
+6. Real-Time Telemetry ➔ Server-Sent Events (SSE) streaming live FPS, bitrates, and PTS segments to UI
+7. Dual Worker Runtimes ➔ Node.js 22 LTS child_process + Enterprise Java 21 Spring Boot 3.3
+
+### 🎨 Visual & UI/UX Constitution
+- Dual Theme: Obsidian Broadcast Deck (#070A0F) & Daylight Calibrated Lab (#FFFFFF)
+- Accent Themes: Electric Cyan (#06B6D4), Matrix Emerald (#10B981), Broadcast Amber (#F59E0B), Cyber Violet (#8B5CF6)
+- Pipeline Visualizer: Multi-layer active pulse & directional photon packet conduits
+- Broadcast Scopes: SMPTE drop-frame counter, Luma Waveform, RGB Parade, Vectorscope, and EBU R128 LUFS meters`
   }
 };
 
@@ -764,7 +796,7 @@ export default function MediaProcessingDashboard() {
             }`}
           >
             <FileCode2 className="w-3.5 h-3.5" />
-            <span>Architecture (15 Files)</span>
+            <span>Architecture & Spec (16 Files)</span>
           </button>
 
           <button
@@ -989,17 +1021,17 @@ export default function MediaProcessingDashboard() {
           </div>
         )}
 
-        {/* TAB 3: ARCHITECTURE & CODE INSPECTOR (15 Files) */}
+        {/* TAB 3: ARCHITECTURE & CODE INSPECTOR (16 Files) */}
         {activeTab === 'code' && (
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/60 backdrop-blur-md p-6 shadow-sm dark:shadow-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800 gap-3">
               <div>
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 font-mono">
                   <FileCode2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                  Production Code Architecture & Multi-Engine Source Vault (15 Files)
+                  Production Code Architecture & System Design Vault (16 Files)
                 </h2>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Complete line-by-line implementations with full TypeScript types, Docker, and Spring Boot Java 21 microservice.
+                  Complete line-by-line implementations with architectural specifications, full TypeScript types, Docker, and Spring Boot Java 21 microservice.
                 </p>
               </div>
 
@@ -1025,7 +1057,7 @@ export default function MediaProcessingDashboard() {
             <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Category & File Selector Sidebar */}
               <div className="lg:col-span-4 space-y-3 font-mono">
-                {['Database & Storage', 'Queue & FFmpeg Worker', 'API Endpoints', 'Infrastructure & Docker', 'Enterprise Java Microservice'].map((cat) => {
+                {['System Architecture & Designs', 'Database & Storage', 'Queue & FFmpeg Worker', 'API Endpoints', 'Infrastructure & Docker', 'Enterprise Java Microservice'].map((cat) => {
                   const filesInCat = Object.entries(CODEBASE_FILES).filter(([_, data]) => data.category === cat);
                   if (filesInCat.length === 0) return null;
 
